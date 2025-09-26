@@ -45,7 +45,7 @@ const CONFIG = {
           <div class="debug-countdown" id="debugCountdown">-</div>
           <div class="debug-interval">
             <label for="debugIntervalInput">Interval:</label>
-            <input type="number" id="debugIntervalInput" class="debug-interval-input" min="1" max="60" step="1" />
+            <input type="text" id="debugIntervalInput" class="debug-interval-input" min="1" max="60" step="1" />
           </div>
           <button class="debug-pause-play" id="debugPausePlay">pause</button>
           <div class="debug-legend">
@@ -345,9 +345,17 @@ const CONFIG = {
 				// Set initial value based on CONFIG.interval (convert ms to seconds)
 				this.debugIntervalInput.value = Math.round(this.interval / 1000);
 				
-				// Add keyup event listener
-				this.debugIntervalInput.addEventListener('keyup', (event) => {
+				// Add blur event listener (when user clicks away or tabs out)
+				this.debugIntervalInput.addEventListener('blur', (event) => {
 					this.updateInterval();
+				});
+				
+				// Add Enter key listener
+				this.debugIntervalInput.addEventListener('keydown', (event) => {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						this.debugIntervalInput.blur(); // Trigger blur event
+					}
 				});
 			}
 		}
