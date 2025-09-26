@@ -1,0 +1,660 @@
+---
+// This runs at build time and automatically discovers all GIF files
+import { readdir } from 'fs/promises';
+import { join } from 'path';
+
+// Get all image files from the public/gifs directory
+const imagesDir = join(process.cwd(), 'public', 'gifs');
+let imageFiles: string[] = [];
+
+// Supported image formats
+const imageExtensions = ['.gif', '.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg', '.avif'];
+
+try {
+  const files = await readdir(imagesDir);
+  imageFiles = files.filter(file => {
+    const ext = file.toLowerCase().substring(file.lastIndexOf('.'));
+    return imageExtensions.includes(ext);
+  });
+  console.log(`Found ${imageFiles.length} image files:`, imageFiles);
+} catch (error) {
+  console.error('Error reading images directory:', error);
+  imageFiles = [];
+}
+
+// Configuration
+const CONFIG = {
+  interval: 8000, // 8 seconds (change this to adjust rotation speed)
+  imageFolder: '/gifs'
+};
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Halloween Images</title>
+  </head>
+  <body>
+    <div class="gif-container">
+      <div class="loading" id="loading">Loading Halloween Images...</div>
+      <div class="debug-panel" id="debugPanel" style="display: none;">
+        <div class="debug-content">
+          <div class="debug-filename" id="debugFilename">-</div>
+          <div class="debug-countdown" id="debugCountdown">-</div>
+          <div class="debug-interval">
+            <label for="debugIntervalInput">Interval:</label>
+            <input type="number" id="debugIntervalInput" class="debug-interval-input" min="1" max="60" step="1" />
+          </div>
+          <button class="debug-pause-play" id="debugPausePlay">pause</button>
+          <div class="debug-legend">
+            <div class="legend-title">Legend</div>
+            <div class="legend-item"><span class="legend-key">→</span> Next image</div>
+            <div class="legend-item"><span class="legend-key">Space</span> Pause/Play</div>
+            <div class="legend-item"><span class="legend-key">D</span> Debug panel</div>
+            <div class="legend-item"><span class="legend-key">F</span> Fullscreen</div>
+            <div class="legend-item"><span class="legend-key">S</span> Orange filter</div>
+          </div>
+        </div>
+      </div>
+    </div>
+		<div class="filter-scrim"></div>
+  </body>
+</html>
+
+<script define:vars={{ imageFiles, CONFIG }}>
+	class HalloweenImageDisplay {
+		constructor() {
+			this.imageContainer = document.querySelector('.gif-container');
+			this.loadingElement = document.getElementById('loading');
+			this.debugPanel = document.getElementById('debugPanel');
+			this.debugFilename = document.getElementById('debugFilename');
+			this.debugCountdown = document.getElementById('debugCountdown');
+			this.debugPausePlay = document.getElementById('debugPausePlay');
+			this.debugIntervalInput = document.getElementById('debugIntervalInput');
+			this.filterScrim = document.querySelector('.filter-scrim');
+			this.currentIndex = 0;
+			this.preloadedImages = new Map();
+			this.intervalId = null;
+			this.countdownId = null;
+			this.imageFiles = imageFiles;
+			this.interval = CONFIG.interval;
+			this.imageFolder = CONFIG.imageFolder;
+			this.debugVisible = false;
+			this.countdownSeconds = 0;
+			this.isPaused = false;
+			this.filterVisible = false;
+			
+			this.init();
+		}
+
+		async init() {
+			try {
+				if (this.imageFiles.length === 0) {
+					throw new Error('No image files found');
+				}
+				
+				await this.preloadImages();
+				this.initializeDebugInput();
+				this.initializeFilter();
+				this.startRotation();
+				this.hideLoading();
+			} catch (error) {
+				console.error('Error initializing image display:', error);
+				this.showError('Failed to load images');
+			}
+		}
+
+		async preloadImages() {
+			const preloadPromises = this.imageFiles.map(async (filename, index) => {
+				const img = new Image();
+				img.src = `${this.imageFolder}/${filename}`;
+				
+				return new Promise((resolve, reject) => {
+					img.onload = () => {
+						this.preloadedImages.set(index, img);
+						resolve(img);
+					};
+					img.onerror = () => {
+						console.warn(`Failed to load ${filename}`);
+						reject(new Error(`Failed to load ${filename}`));
+					};
+				});
+			});
+
+			try {
+				await Promise.allSettled(preloadPromises);
+				console.log(`Preloaded ${this.preloadedImages.size} images`);
+			} catch (error) {
+				console.error('Error preloading images:', error);
+			}
+		}
+
+		startRotation() {
+			if (this.preloadedImages.size === 0) {
+				this.showError('No images available');
+				return;
+			}
+
+			// Show first image immediately
+			this.showRandomImage();
+
+			// Set up interval for rotation
+			this.intervalId = setInterval(() => {
+				this.showRandomImage();
+			}, this.interval);
+
+			// Start countdown
+			this.startCountdown();
+		}
+
+		showRandomImage() {
+			const availableIndices = Array.from(this.preloadedImages.keys());
+			if (availableIndices.length === 0) return;
+
+			// Get a random index different from current
+			let randomIndex;
+			do {
+				randomIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+			} while (randomIndex === this.currentIndex && availableIndices.length > 1);
+
+			this.currentIndex = randomIndex;
+			this.displayImage(randomIndex);
+			
+			// Only restart countdown if not paused
+			if (!this.isPaused) {
+				this.startCountdown();
+			}
+		}
+
+		displayImage(index) {
+			const img = this.preloadedImages.get(index);
+			if (!img) return;
+
+			// Remove existing active image
+			const existingActive = this.imageContainer.querySelector('.gif-image.active');
+			if (existingActive) {
+				existingActive.remove();
+			}
+
+			// Create new image element
+			const imgElement = img.cloneNode();
+			imgElement.className = 'gif-image';
+			imgElement.alt = `Halloween Image ${index + 1}`;
+			
+			this.imageContainer.appendChild(imgElement);
+
+			// Trigger transition
+			requestAnimationFrame(() => {
+				imgElement.classList.add('active');
+			});
+
+			// Update debug info if visible
+			this.updateDebugInfo();
+		}
+
+		hideLoading() {
+			if (this.loadingElement) {
+				this.loadingElement.style.display = 'none';
+			}
+		}
+
+		showError(message) {
+			if (this.loadingElement) {
+				this.loadingElement.textContent = message;
+				this.loadingElement.className = 'error';
+			}
+		}
+
+		destroy() {
+			if (this.intervalId) {
+				clearInterval(this.intervalId);
+				this.intervalId = null;
+			}
+		}
+
+		// Handle keyboard navigation
+		handleKeyPress(event) {
+			if (event.key === 'ArrowRight') {
+				event.preventDefault();
+				this.showRandomImage();
+				// Only reset interval if not paused
+				if (!this.isPaused) {
+					this.resetInterval();
+				}
+				console.log('Skipped to next image via keyboard');
+			} else if (event.key === 'd' || event.key === 'D') {
+				event.preventDefault();
+				this.toggleDebug();
+				console.log('Debug panel toggled');
+			} else if (event.key === ' ') {
+				event.preventDefault();
+				this.togglePause();
+				console.log('Pause/play toggled via spacebar');
+			} else if (event.key === 'f' || event.key === 'F') {
+				event.preventDefault();
+				this.toggleFullscreen();
+				console.log('Fullscreen toggled');
+			} else if (event.key === 's' || event.key === 'S') {
+				event.preventDefault();
+				this.toggleFilter();
+				console.log('Filter toggled');
+			}
+		}
+
+		// Reset the interval timer
+		resetInterval() {
+			if (this.intervalId) {
+				clearInterval(this.intervalId);
+			}
+			if (this.countdownId) {
+				clearInterval(this.countdownId);
+			}
+			
+			this.intervalId = setInterval(() => {
+				this.showRandomImage();
+			}, this.interval);
+			
+			this.startCountdown();
+		}
+
+		// Start countdown display
+		startCountdown() {
+			// Clear any existing countdown
+			if (this.countdownId) {
+				clearInterval(this.countdownId);
+			}
+			
+			this.countdownSeconds = Math.ceil(this.interval / 1000);
+			this.updateCountdown();
+			
+			this.countdownId = setInterval(() => {
+				this.countdownSeconds--;
+				this.updateCountdown();
+				
+				if (this.countdownSeconds <= 0) {
+					clearInterval(this.countdownId);
+				}
+			}, 1000);
+		}
+
+		// Update countdown display
+		updateCountdown() {
+			if (this.debugVisible && this.debugCountdown) {
+				this.debugCountdown.textContent = `Next: ${this.countdownSeconds}s`;
+			}
+		}
+
+		// Toggle debug panel visibility
+		toggleDebug() {
+			this.debugVisible = !this.debugVisible;
+			if (this.debugPanel) {
+				this.debugPanel.style.display = this.debugVisible ? 'block' : 'none';
+			}
+			
+			if (this.debugVisible) {
+				this.updateDebugInfo();
+				this.updateCountdown();
+			}
+		}
+
+		// Update debug information
+		updateDebugInfo() {
+			if (this.debugVisible && this.debugFilename) {
+				const currentFile = this.imageFiles[this.currentIndex];
+				this.debugFilename.textContent = currentFile || '-';
+			}
+		}
+
+		// Toggle pause/play
+		togglePause() {
+			this.isPaused = !this.isPaused;
+			
+			if (this.isPaused) {
+				// Pause: clear intervals
+				if (this.intervalId) {
+					clearInterval(this.intervalId);
+					this.intervalId = null;
+				}
+				if (this.countdownId) {
+					clearInterval(this.countdownId);
+					this.countdownId = null;
+				}
+				this.updatePausePlayButton();
+				if (this.debugVisible && this.debugCountdown) {
+					this.debugCountdown.textContent = 'PAUSED';
+				}
+			} else {
+				// Resume: restart intervals
+				this.resetInterval();
+				this.updatePausePlayButton();
+			}
+		}
+
+		// Update pause/play button text
+		updatePausePlayButton() {
+			if (this.debugPausePlay) {
+				this.debugPausePlay.textContent = this.isPaused ? 'play' : 'pause';
+			}
+		}
+
+		// Initialize debug input field
+		initializeDebugInput() {
+			if (this.debugIntervalInput) {
+				// Set initial value based on CONFIG.interval (convert ms to seconds)
+				this.debugIntervalInput.value = Math.round(this.interval / 1000);
+				
+				// Add keyup event listener
+				this.debugIntervalInput.addEventListener('keyup', (event) => {
+					this.updateInterval();
+				});
+			}
+		}
+
+		// Update interval from input field
+		updateInterval() {
+			if (this.debugIntervalInput) {
+				const seconds = parseInt(this.debugIntervalInput.value);
+				
+				// Validate input (1-60 seconds)
+				if (seconds >= 1 && seconds <= 60) {
+					this.interval = seconds * 1000; // Convert to milliseconds
+					
+					// If currently playing, restart with new interval
+					if (!this.isPaused) {
+						this.resetInterval();
+					}
+					
+					console.log(`Interval updated to ${seconds} seconds`);
+				} else {
+					// Reset to valid value if invalid input
+					this.debugIntervalInput.value = Math.round(this.interval / 1000);
+				}
+			}
+		}
+
+		// Toggle fullscreen mode
+		toggleFullscreen() {
+			if (!document.fullscreenElement) {
+				// Enter fullscreen
+				document.documentElement.requestFullscreen().catch(err => {
+					console.error('Error attempting to enable fullscreen:', err);
+				});
+			} else {
+				// Exit fullscreen
+				document.exitFullscreen().catch(err => {
+					console.error('Error attempting to exit fullscreen:', err);
+				});
+			}
+		}
+
+		// Initialize filter scrim
+		initializeFilter() {
+			if (this.filterScrim) {
+				// Start with filter hidden
+				this.filterScrim.style.display = 'none';
+			}
+		}
+
+		// Toggle filter scrim
+		toggleFilter() {
+			this.filterVisible = !this.filterVisible;
+			
+			if (this.filterScrim) {
+				this.filterScrim.style.display = this.filterVisible ? 'block' : 'none';
+			}
+		}
+
+		// Handle page clicks
+		handlePageClick(event) {
+			// If debug panel is hidden, show it
+			if (!this.debugVisible) {
+				this.toggleDebug();
+			} else {
+				// If debug panel is visible, hide it (click is outside panel since panel clicks stop propagation)
+				this.toggleDebug();
+			}
+		}
+	}
+
+	// Initialize the image display when the page loads
+	document.addEventListener('DOMContentLoaded', () => {
+		const imageDisplay = new HalloweenImageDisplay();
+		
+		// Add keyboard event listener
+		document.addEventListener('keydown', (event) => {
+			imageDisplay.handleKeyPress(event);
+		});
+
+		// Add click event listener for pause/play button
+		const pausePlayButton = document.getElementById('debugPausePlay');
+		if (pausePlayButton) {
+			pausePlayButton.addEventListener('click', (event) => {
+				event.stopPropagation(); // Prevent closing debug panel
+				imageDisplay.togglePause();
+			});
+		}
+
+		// Add click event listener for interval input
+		const intervalInput = document.getElementById('debugIntervalInput');
+		if (intervalInput) {
+			intervalInput.addEventListener('click', (event) => {
+				event.stopPropagation(); // Prevent closing debug panel
+			});
+		}
+
+		// Add click event listener for debug panel
+		const debugPanel = document.getElementById('debugPanel');
+		if (debugPanel) {
+			debugPanel.addEventListener('click', (event) => {
+				event.stopPropagation(); // Prevent closing debug panel when clicking inside
+			});
+		}
+
+		// Add click event listener for the entire page
+		document.addEventListener('click', (event) => {
+			imageDisplay.handlePageClick(event);
+		});
+	});
+
+	// Handle page visibility changes
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) {
+			console.log('Page hidden - rotation continues in background');
+		} else {
+			console.log('Page visible');
+		}
+	});
+</script>
+
+<style is:global>
+	* {
+		margin: 0;
+		padding: 0;
+		box-sizing: border-box;
+	}
+
+	body {
+		width: 100vw;
+		height: 100vh;
+		overflow: hidden;
+		background: #000;
+		font-family: Arial, sans-serif;
+	}
+
+	.gif-container {
+		position: relative;
+		width: 100vw;
+		height: 100vh;
+	}
+
+	.gif-image {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		opacity: 0;
+		transition: opacity 0.5s ease-in-out;
+	}
+
+	.gif-image.active {
+		opacity: 1;
+	}
+
+	.loading {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		color: #fff;
+		font-size: 18px;
+		z-index: 1000;
+	}
+
+	.error {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		color: #ff6b6b;
+		font-size: 18px;
+		text-align: center;
+		z-index: 1000;
+	}
+
+	.debug-panel {
+		position: absolute;
+		top: 20px;
+		right: 20px;
+		backdrop-filter: blur(10px);
+		background: rgba(0, 0, 0, 0.65);
+		border-radius: 8px;
+		padding: 12px 16px;
+		z-index: 1001;
+		font-family: 'Courier New', monospace;
+		font-weight: bold;
+		color: white;
+		font-size: 14px;
+		line-height: 1.4;
+		min-width: 200px;
+	}
+
+	.debug-content {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.debug-filename {
+		font-size: 12px;
+		opacity: 0.9;
+		word-break: break-all;
+	}
+
+	.debug-countdown {
+		font-size: 16px;
+		color: #00ff00;
+	}
+
+	.debug-interval {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 8px;
+	}
+
+	.debug-interval label {
+		font-size: 12px;
+		color: white;
+		font-family: 'Courier New', monospace;
+		font-weight: bold;
+	}
+
+	.debug-interval-input {
+		background: #333;
+		color: white;
+		border: 1px solid #555;
+		border-radius: 4px;
+		padding: 4px 8px;
+		font-family: 'Courier New', monospace;
+		font-weight: bold;
+		font-size: 12px;
+		width: 40px;
+		text-align: center;
+	}
+
+	.debug-interval-input:focus {
+		outline: none;
+		border-color: #00ff00;
+	}
+
+	.debug-pause-play {
+		background: #333;
+		color: white;
+		border: 1px solid #555;
+		border-radius: 4px;
+		padding: 6px 12px;
+		font-family: 'Courier New', monospace;
+		font-weight: bold;
+		font-size: 12px;
+		cursor: pointer;
+		margin-top: 8px;
+		transition: background-color 0.2s;
+	}
+
+	.debug-pause-play:hover {
+		background: #444;
+	}
+
+	.debug-pause-play:active {
+		background: #222;
+	}
+
+	.debug-legend {
+		margin-top: 12px;
+		padding-top: 8px;
+		border-top: 1px solid #444;
+	}
+
+	.legend-title {
+		font-size: 12px;
+		color: white;
+		font-family: 'Courier New', monospace;
+		font-weight: bold;
+		margin-bottom: 6px;
+		opacity: 0.9;
+	}
+
+	.legend-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 8px;
+		font-size: 11px;
+		color: white;
+		font-family: 'Courier New', monospace;
+	}
+
+	.legend-key {
+		background: #333;
+		color: #00ff00;
+		border: 1px solid #555;
+		border-radius: 3px;
+		padding: 2px 6px;
+		font-weight: bold;
+		font-size: 10px;
+		min-width: 20px;
+		text-align: center;
+	}
+
+	/* Filter scrim */
+	.filter-scrim {
+		inset: 0;
+		position: absolute;
+		mix-blend-mode: color;
+		background: hsl(21, 100%, 58%);
+	}
+</style>
