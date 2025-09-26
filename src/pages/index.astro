@@ -469,6 +469,10 @@ const CONFIG = {
 </script>
 
 <style is:global>
+	:root {
+		--color-highlight: hsl(21, 100%, 58%);
+	}
+
 	* {
 		margin: 0;
 		padding: 0;
@@ -556,7 +560,7 @@ const CONFIG = {
 
 	.debug-countdown {
 		font-size: 16px;
-		color: #00ff00;
+		color: var(--color-highlight);
 	}
 
 	.debug-interval {
@@ -588,7 +592,7 @@ const CONFIG = {
 
 	.debug-interval-input:focus {
 		outline: none;
-		border-color: #00ff00;
+		border-color: var(--color-highlight);
 	}
 
 	.debug-pause-play {
@@ -640,7 +644,7 @@ const CONFIG = {
 
 	.legend-key {
 		background: #333;
-		color: #00ff00;
+		color: var(--color-highlight);
 		border: 1px solid #555;
 		border-radius: 3px;
 		padding: 2px 6px;
